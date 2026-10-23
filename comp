@@ -1,19 +1,19 @@
 #!/usr/bin/env bash
-
 set -euo pipefail
 
 # Supported Compose filenames and extensions (in search priority order)
 COMPOSE_FILES=("docker-compose" "compose")
 COMPOSE_EXT=("yml" "yaml")
 DEFAULT_COMPOSE_FILE="docker-compose.yml"
+DEFAULT_LOG_SERVICE="app"
 
-# Root directory containing Compose projects
-dir="${d_docker_comp:?d_docker_comp is not set}"
+# Root directory containing project directories
+DirEnv="${d_docker_comp:?d_docker_comp is not set}"
+dir="$DirEnv"
 parameter="${1:-}"
 name=("${@:2}")
 OPTS=(--log-level error)
 
-# Detect Docker Compose implementation
 if command -v docker-compose >/dev/null 2>&1; then
     docker_compose=(docker-compose)
 else
@@ -25,8 +25,7 @@ else
 fi
 
 find_compose_file() {
-    local project="$1"
-    local file ext path
+    local project="$1" file ext path
     for file in "${COMPOSE_FILES[@]}"; do
         for ext in "${COMPOSE_EXT[@]}"; do
             path="$dir/$project/$file.$ext"
@@ -52,9 +51,8 @@ checkstat() {
 }
 
 compose_run() {
-    local project="$1"
+    local project="$1" compose_file
     shift
-    local compose_file
     checkstat "$project" || return 1
     compose_file="$(find_compose_file "$project")"
     (
@@ -64,11 +62,10 @@ compose_run() {
 }
 
 edit_compose() {
-    local project="$1"
-    local compose_file yn
+    local project="$1" compose_file yn
     if [[ ! -d "$dir/$project" ]]; then
         echo "Do you want to create a new project named '$project'?"
-        select yn in "Yes" "No"; do
+        select yn in Yes No; do
             case "$yn" in
                 Yes) mkdir -p -- "$dir/$project"; break ;;
                 No) return 0 ;;
@@ -132,11 +129,38 @@ case "$parameter" in
             compose_run "$i" ps
         done
         ;;
-    logs|log)
+    log|logs)
         require_projects
-        for i in "${name[@]}"; do
-            compose_run "$i" logs -f
+        project="${name[0]}"
+        follow_args=(-f)
+        services=()
+        no_follow=false
+
+        # Accept -N/--no-follow after the project, including at the end.
+        for arg in "${name[@]:1}"; do
+            case "$arg" in
+                -N|--no-follow) no_follow=true ;;
+                -*)
+                    echo "Unknown log option: $arg" >&2
+                    exit 2
+                    ;;
+                *) services+=("$arg") ;;
+            esac
         done
+
+        if [[ "$no_follow" == true ]]; then
+            follow_args=()
+        fi
+
+        if [[ "$parameter" == log ]]; then
+            if (( ${#services[@]} > 1 )); then
+                echo "'log' accepts only one service. Use 'logs' for multiple services." >&2
+                exit 2
+            fi
+            compose_run "$project" logs "${follow_args[@]}" "${services[0]:-$DEFAULT_LOG_SERVICE}"
+        else
+            compose_run "$project" logs "${follow_args[@]}" "${services[@]}"
+        fi
         ;;
     start|up)
         require_projects
@@ -193,30 +217,34 @@ COMP – Compose Organization and Management Program
 Usage: $0 <action> <project...>
 
 Actions:
-  edit              Edit or create Compose configuration
-  delete, rm        Delete project directory (confirmation required)
-  cat, ls, list     Display Compose configuration
-  status, ps        Show container status
-  logs, log         Follow Compose logs (Ctrl+C to exit)
-  start, up         Start containers
-  restart, reload   Restart containers
-  recreate, rebuild Recreate containers (down then up -d; no image build)
-  stop              Stop containers
-  remove, down      Stop and remove containers
-  purge             Remove containers and volumes (confirmation required)
-  pause, halt       Pause containers
-  unpause, unhalt   Resume paused containers
-  pull              Pull container images
-  mod               Edit this script
+  edit                 Edit or create Compose configuration
+  delete, rm           Delete project directory (confirmation required)
+  cat, ls, list        Display Compose configuration
+  status, ps           Show project container status
+  log <project> [svc] [-N|--no-follow]    One service (default: app)
+  logs <project> [svc...] [-N|--no-follow] All or selected services
+  start, up            Start services
+  restart, reload      Restart services
+  recreate, rebuild    Run down followed by up -d (does not build images)
+  stop                 Stop services
+  remove, down         Stop and remove services
+  purge                Remove containers and Compose volumes (confirmation required)
+  pause, halt          Pause services
+  unpause, unhalt      Resume paused services
+  pull                 Pull images
+  mod                  Edit COMP itself
 
-Supported Compose files:
-  docker-compose.yml
-  docker-compose.yaml
-  compose.yml
-  compose.yaml
+Log examples:
+  $0 log vikunja            Follow the app service
+  $0 log vikunja db         Follow the db service
+  $0 logs vikunja           Follow all services
+  $0 logs vikunja app db    Follow app and db services
+  $0 log vikunja db -N      Show db logs once, then exit
+  $0 logs vikunja --no-follow Show all logs once, then exit
+  Logs follow continuously by default; press Ctrl+C to stop.
 
-Destructive operations:
-  delete/rm and purge require explicit confirmation (default: No).
+Supported Compose files (first match wins):
+  docker-compose.yml, docker-compose.yaml, compose.yml, compose.yaml
 HELP
         ;;
     *)
