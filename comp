@@ -5,6 +5,9 @@
 #set -eo pipefail
 set -euo pipefail
 
+COMPOSE_FILE=("docker-compose" "compose")
+COMPOSE_EXT=("yml" "yaml")
+
 # Change the current working directory to the scripts directory temporary
 #dir="$( cd "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null 2>&1 && pwd )"
 dir="$d_docker_comp"
@@ -41,7 +44,7 @@ for i in ${name[@]}; do
 if [[ ! -d $dir/$i ]] && [[ $parameter != edit ]];then
     	echo "$i not found! Use edit to create a new one"
     	exit
-elif [[ ! -f $dir/$i/docker-compose.yml ]]; then
+elif [[ ! -f $dir/$i/"${COMPOSE_FILE:-docker-compose}.${COMPOSE_EXT:-yml}" ]]; then
     	echo "$i service file not found! Use edit to create a new one"
     	exit
 fi
@@ -76,13 +79,13 @@ case "$parameter" in
 	    	echo "Do you want to create a new container named $i?"
 		select yn in "Yes" "No"; do
 		    case $yn in
-		        Yes ) mkdir $dir/$i && editor $dir/$i/docker-compose.yml; break;;
+		        Yes ) mkdir $dir/$i && editor $dir/$i/"${COMPOSE_FILE:-docker-compose}.${COMPOSE_EXT:-yml}"; break;;
 		        No ) exit;;
 		    esac
 		done
 		#exit
 	else
-		editor $dir/$i/docker-compose.yml
+		editor $dir/$i/"${COMPOSE_FILE:-docker-compose}.${COMPOSE_EXT:-yml}"
    	fi
 	done
    ;;
@@ -94,13 +97,13 @@ case "$parameter" in
 	    	echo "Do you want to create a new container named $i?"
 		select yn in "Yes" "No"; do
 		    case $yn in
-		        Yes ) mkdir $dir/$i && editor $dir/$i/docker-compose.yml; break;;
+		        Yes ) mkdir $dir/$i && editor $dir/$i/"${COMPOSE_FILE:-docker-compose}.${COMPOSE_EXT:-yml}"; break;;
 		        No ) exit;;
 		    esac
 		done
 		#exit
 	else
-		cat $dir/$i/docker-compose.yml
+		cat $dir/$i/"${COMPOSE_FILE:-docker-compose}.${COMPOSE_EXT:-yml}"
    	fi
 	done
    ;;
@@ -109,7 +112,7 @@ case "$parameter" in
 	checkstat
 	printf '   Name           Command         State    Ports\n-------------------------------------------------\n'
 	for i in ${name[@]}; do
-	if [[ -f "$dir/$i/docker-compose.yml" ]]; then
+	if [[ -f "$dir/$i/"${COMPOSE_FILE:-docker-compose}.${COMPOSE_EXT:-yml}"" ]]; then
 	cd $dir/$i && $docker_compose ps | grep -v -e Name -e ^-
 	  #if docker-compose "$dir/$i" ps | grep '"Paused"'  >/dev/null 2>&1; then
 	  #echo "$i is paused"
@@ -130,7 +133,7 @@ case "$parameter" in
 	checkstat
 	for i in ${name[@]}; do
 	cd $dir/$i
-	$docker_compose --file $dir/$i/docker-compose.yml up -d
+	$docker_compose --file $dir/$i/"${COMPOSE_FILE:-docker-compose}.${COMPOSE_EXT:-yml}" up -d
 	#if docker inspect "$i" >/dev/null 2>&1; then
 	  #if docker inspect "$i" | grep '"Running": true,'  >/dev/null 2>&1; then
 	    #echo "$i already started"
@@ -149,7 +152,7 @@ case "$parameter" in
 	checkstat
 	for i in ${name[@]}; do
 	cd $dir/$i
-	$docker_compose --file $dir/$i/docker-compose.yml restart
+	$docker_compose --file $dir/$i/"${COMPOSE_FILE:-docker-compose}.${COMPOSE_EXT:-yml}" restart
 
 	#if docker inspect "$i" >/dev/null 2>&1; then
 	  #echo "Restarting $i"
@@ -164,8 +167,8 @@ case "$parameter" in
 	checkstat
 	for i in ${name[@]}; do
 	cd $dir/$i
-	$docker_compose --file $dir/$i/docker-compose.yml down
-	$docker_compose --file $dir/$i/docker-compose.yml up -d
+	$docker_compose --file $dir/$i/"${COMPOSE_FILE:-docker-compose}.${COMPOSE_EXT:-yml}" down
+	$docker_compose --file $dir/$i/"${COMPOSE_FILE:-docker-compose}.${COMPOSE_EXT:-yml}" up -d
 	#if docker inspect "$i" >/dev/null 2>&1; then
 	  #echo "Stopping $i"
 	  #docker stop $i >/dev/null 2>&1
@@ -183,7 +186,7 @@ case "$parameter" in
 	checkstat
 	for i in ${name[@]}; do
 	cd $dir/$i
-	$docker_compose --file $dir/$i/docker-compose.yml stop
+	$docker_compose --file $dir/$i/"${COMPOSE_FILE:-docker-compose}.${COMPOSE_EXT:-yml}" stop
 	#if docker inspect "$i" | grep '"Running": true,'  >/dev/null 2>&1; then
 	  #echo "Stopping $i"
 	  #docker stop "$i" >/dev/null 2>&1
@@ -197,7 +200,7 @@ case "$parameter" in
 	checkstat
 	for i in ${name[@]}; do
 	cd $dir/$i
-	$docker_compose --file $dir/$i/docker-compose.yml down
+	$docker_compose --file $dir/$i/"${COMPOSE_FILE:-docker-compose}.${COMPOSE_EXT:-yml}" down
 	#if docker inspect "$i" >/dev/null 2>&1; then
 	#if docker inspect "$i" | grep '"Running": true,'  >/dev/null 2>&1; then
 	  #echo "Stopping $i"
@@ -218,7 +221,7 @@ case "$parameter" in
 	checkstat
 	for i in ${name[@]}; do
 	cd $dir/$i
-	$docker_compose --file $dir/$i/docker-compose.yml down -v --remove-orphans
+	$docker_compose --file $dir/$i/"${COMPOSE_FILE:-docker-compose}.${COMPOSE_EXT:-yml}" down -v --remove-orphans
 	#if docker inspect "$i" >/dev/null 2>&1; then
 	#if docker inspect "$i" | grep '"Running": true,'  >/dev/null 2>&1; then
 	  #echo "Stopping $i"
@@ -239,7 +242,7 @@ case "$parameter" in
 	checkstat
 	for i in ${name[@]}; do
 	cd $dir/$i
-	$docker_compose --file $dir/$i/docker-compose.yml pause
+	$docker_compose --file $dir/$i/"${COMPOSE_FILE:-docker-compose}.${COMPOSE_EXT:-yml}" pause
 	#if docker inspect "$i" | grep '"Running": true,'  >/dev/null 2>&1; then
 	#if docker inspect "$i" | grep '"Paused": true,'  >/dev/null 2>&1; then
 	  #echo "$i already paused"
@@ -257,7 +260,7 @@ case "$parameter" in
 	checkstat
 	for i in ${name[@]}; do
 	cd $dir/$i
-	$docker_compose --file $dir/$i/docker-compose.yml unpause
+	$docker_compose --file $dir/$i/"${COMPOSE_FILE:-docker-compose}.${COMPOSE_EXT:-yml}" unpause
 	#if docker inspect "$i" | grep '"Paused": false,'  >/dev/null 2>&1; then
 	  #echo "$i already unpaused"
 	#else
@@ -271,7 +274,7 @@ case "$parameter" in
 	checkstat
 	for i in ${name[@]}; do
 	cd $dir/$i
-	eval $docker_compose --file $dir/$i/docker-compose.yml pull
+	eval $docker_compose --file $dir/$i/"${COMPOSE_FILE:-docker-compose}.${COMPOSE_EXT:-yml}" pull
 	done
 	;;
 
