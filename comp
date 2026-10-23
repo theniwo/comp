@@ -1,309 +1,288 @@
-#/usr/bin/env bash
 
+#!/usr/bin/env bash
 
-# Comment
-#set -eo pipefail
 set -euo pipefail
 
-COMPOSE_FILE=("docker-compose" "compose")
+# Supported Compose filenames and extensions
+COMPOSE_FILES=("compose" "docker-compose")
 COMPOSE_EXT=("yml" "yaml")
 
-# Change the current working directory to the scripts directory temporary
-#dir="$( cd "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null 2>&1 && pwd )"
-dir="$d_docker_comp"
+# Default filename for new projects
+DEFAULT_COMPOSE_FILE="compose.yml"
 
-# The first parameter has to be one of these: start/stop/...
-parameter=($1)
+# Root directory containing Docker projects
+dir="${d_docker_comp:?d_docker_comp is not set}"
 
-# The name/s of containers to manipulate (2nd to nth parameter)
-name="${@:2}"
+# Command line arguments
+parameter="${1:-}"
+name=("${@:2}")
 
-# Count the parameters
-aLen=$#
+# Docker options
+OPTS=(--log-level error)
 
-# We need a working directory, otherwise we'd have to put $dir in front of every $name. you decide what is best ;)
-cd "$dir"
-
-# Command line options
-OPTS="--log-level error"
-
-# Docker compose may be not installed, use docker compose plugin then
-if ! docker-compose &>/dev/null; then
-	if [ -z "${NOCOMPOSE+x}" ]; then
-		echo -e "No docker-compose installed. Using docker compose plugin\nSet NOCOMPOSE, to suppress this message."
-		docker_compose="$(which docker) $OPTS compose"
-	fi
-		docker_compose="$(which docker) $OPTS compose"
+# Find Docker Compose executable
+if command -v docker-compose >/dev/null 2>&1; then
+    docker_compose=(docker-compose)
 else
-  	docker_compose=$(which docker-compose) $OPTS
+    docker_compose=(docker "${OPTS[@]}" compose)
+
+    if [[ -z "${NOCOMPOSE+x}" ]]; then
+        echo "No docker-compose installed. Using docker compose plugin."
+        echo "Set NOCOMPOSE to suppress this message."
+    fi
 fi
 
-# Check if file is found and/or executable. If parameter "edit" then we create a new file. Not doing chmod +x automatically for now.
-checkstat(){
-for i in ${name[@]}; do
-if [[ ! -d $dir/$i ]] && [[ $parameter != edit ]];then
-    	echo "$i not found! Use edit to create a new one"
-    	exit
-elif [[ ! -f $dir/$i/"${COMPOSE_FILE:-docker-compose}.${COMPOSE_EXT:-yml}" ]]; then
-    	echo "$i service file not found! Use edit to create a new one"
-    	exit
-fi
-done
+# Locate Compose file in a project directory.
+# Returns the full path via stdout.
+find_compose_file() {
+    local project="$1"
+    local file ext path
+
+    for file in "${COMPOSE_FILES[@]}"; do
+        for ext in "${COMPOSE_EXT[@]}"; do
+            path="$dir/$project/$file.$ext"
+
+            if [[ -f "$path" ]]; then
+                printf '%s\n' "$path"
+                return 0
+            fi
+        done
+    done
+
+    return 1
 }
 
-# Begin of the magic
+# Validate project directory and Compose file
+checkstat() {
+    local project="$1"
+
+    if [[ ! -d "$dir/$project" ]]; then
+        echo "Project '$project' not found!" >&2
+        return 1
+    fi
+
+    if ! find_compose_file "$project" >/dev/null; then
+        echo "No Compose file found for '$project'!" >&2
+        return 1
+    fi
+}
+
+# Run Docker Compose command for a project
+compose_run() {
+    local project="$1"
+    shift
+
+    local compose_file
+
+    checkstat "$project" || return 1
+    compose_file="$(find_compose_file "$project")"
+
+    (
+        cd "$dir/$project"
+        "${docker_compose[@]}" --file "$compose_file" "$@"
+    )
+}
+
+# Edit existing Compose file or create a new project
+edit_compose() {
+    local project="$1"
+    local compose_file
+
+    if [[ ! -d "$dir/$project" ]]; then
+        echo "Do you want to create a new project named '$project'?"
+
+        select yn in "Yes" "No"; do
+            case "$yn" in
+                Yes)
+                    mkdir -p "$dir/$project"
+                    break
+                    ;;
+                No)
+                    return 0
+                    ;;
+            esac
+        done
+    fi
+
+    compose_file="$(find_compose_file "$project")" ||
+        compose_file="$dir/$project/$DEFAULT_COMPOSE_FILE"
+
+    "${EDITOR:-vi}" "$compose_file"
+}
+
+# Require project arguments
+require_projects() {
+    if (( ${#name[@]} == 0 )); then
+        echo "No projects specified." >&2
+        exit 1
+    fi
+}
+
+# Execute actions
 case "$parameter" in
-   mod)
-   	editor $0
-   ;;
 
-   delete|rm)
-	checkstat
-	for i in ${name[@]}; do
-	if [[ -d $i ]];then
-	    	echo "Do you really want to delete all service files for $i?"
-		select yn in "Yes" "No"; do
-		    case $yn in
-		        Yes ) rm -fr $dir/$i; break;;
-		        No ) exit;;
-		    esac
-		done
-	fi
-	done
-   ;;
-
-   edit)
-	#checkstat
-	for i in ${name[@]}; do
-	if [ ! -d $i ]; then
-	    	echo "Do you want to create a new container named $i?"
-		select yn in "Yes" "No"; do
-		    case $yn in
-		        Yes ) mkdir $dir/$i && editor $dir/$i/"${COMPOSE_FILE:-docker-compose}.${COMPOSE_EXT:-yml}"; break;;
-		        No ) exit;;
-		    esac
-		done
-		#exit
-	else
-		editor $dir/$i/"${COMPOSE_FILE:-docker-compose}.${COMPOSE_EXT:-yml}"
-   	fi
-	done
-   ;;
-
-   cat|ls|list)
-	#checkstat
-	for i in ${name[@]}; do
-	if [ ! -d $i ]; then
-	    	echo "Do you want to create a new container named $i?"
-		select yn in "Yes" "No"; do
-		    case $yn in
-		        Yes ) mkdir $dir/$i && editor $dir/$i/"${COMPOSE_FILE:-docker-compose}.${COMPOSE_EXT:-yml}"; break;;
-		        No ) exit;;
-		    esac
-		done
-		#exit
-	else
-		cat $dir/$i/"${COMPOSE_FILE:-docker-compose}.${COMPOSE_EXT:-yml}"
-   	fi
-	done
-   ;;
-
-   status|ps)
-	checkstat
-	printf '   Name           Command         State    Ports\n-------------------------------------------------\n'
-	for i in ${name[@]}; do
-	if [[ -f "$dir/$i/"${COMPOSE_FILE:-docker-compose}.${COMPOSE_EXT:-yml}"" ]]; then
-	cd $dir/$i && $docker_compose ps | grep -v -e Name -e ^-
-	  #if docker-compose "$dir/$i" ps | grep '"Paused"'  >/dev/null 2>&1; then
-	  #echo "$i is paused"
-	  #elif docker-compose "$i" ps | grep '"Restarting"'  >/dev/null 2>&1;then
-	    #echo "$i is restarting"
-	  #elif docker-compose "$i" ps | grep '"Stopped'  >/dev/null 2>&1;then
-	    #echo "$i is stopped"
-	  #elif docker-compose "$i" ps | grep '"Up'  >/dev/null 2>&1; then
-	    #echo "$i is up"
-	#fi
-	else
-	echo "No Container named $i"
-	fi
-	done
+    mod)
+        "${EDITOR:-vi}" "$0"
         ;;
 
-   start|up)
-	checkstat
-	for i in ${name[@]}; do
-	cd $dir/$i
-	$docker_compose --file $dir/$i/"${COMPOSE_FILE:-docker-compose}.${COMPOSE_EXT:-yml}" up -d
-	#if docker inspect "$i" >/dev/null 2>&1; then
-	  #if docker inspect "$i" | grep '"Running": true,'  >/dev/null 2>&1; then
-	    #echo "$i already started"
-	  #elif docker inspect "$i" | grep '"Running": false,'  >/dev/null 2>&1;then
-	    #echo "Starting $i"
-	    #docker start "$i"  >/dev/null
-	  #fi
-	#else
-	  #echo "Starting new $i"
-	  #./$i >/dev/null
-	#fi
-	done
+    delete|rm)
+        require_projects
+
+        for i in "${name[@]}"; do
+            checkstat "$i"
+
+            echo "Delete all service files for '$i'?"
+
+            select yn in "Yes" "No"; do
+                case "$yn" in
+                    Yes)
+                        rm -rf -- "$dir/$i"
+                        break
+                        ;;
+                    No)
+                        break
+                        ;;
+                esac
+            done
+        done
         ;;
 
-   restart|reload)
-	checkstat
-	for i in ${name[@]}; do
-	cd $dir/$i
-	$docker_compose --file $dir/$i/"${COMPOSE_FILE:-docker-compose}.${COMPOSE_EXT:-yml}" restart
+    edit)
+        require_projects
 
-	#if docker inspect "$i" >/dev/null 2>&1; then
-	  #echo "Restarting $i"
-	  #docker restart "$i" >/dev/null 2>&1
-	#else
-	  #echo "$i not running"
-	#fi
-	done
+        for i in "${name[@]}"; do
+            edit_compose "$i"
+        done
         ;;
 
-   recreate|rebuild)
-	checkstat
-	for i in ${name[@]}; do
-	cd $dir/$i
-	$docker_compose --file $dir/$i/"${COMPOSE_FILE:-docker-compose}.${COMPOSE_EXT:-yml}" down
-	$docker_compose --file $dir/$i/"${COMPOSE_FILE:-docker-compose}.${COMPOSE_EXT:-yml}" up -d
-	#if docker inspect "$i" >/dev/null 2>&1; then
-	  #echo "Stopping $i"
-	  #docker stop $i >/dev/null 2>&1
-	  #echo "Removing $i"
-	  #docker rm "$i" >/dev/null 2>&1
-	#else
-	  #echo "$i already stopped"
-	#fi
-	  #echo "Starting $i"
-	  #"./$i" >/dev/null
-	done
+    cat|ls|list)
+        require_projects
+
+        for i in "${name[@]}"; do
+            checkstat "$i"
+            compose_file="$(find_compose_file "$i")"
+
+            echo "=== $i ==="
+            cat -- "$compose_file"
+        done
         ;;
 
-   stop)
-	checkstat
-	for i in ${name[@]}; do
-	cd $dir/$i
-	$docker_compose --file $dir/$i/"${COMPOSE_FILE:-docker-compose}.${COMPOSE_EXT:-yml}" stop
-	#if docker inspect "$i" | grep '"Running": true,'  >/dev/null 2>&1; then
-	  #echo "Stopping $i"
-	  #docker stop "$i" >/dev/null 2>&1
-	#else
-	  #echo "$i already stopped"
-	#fi
-	done
+    status|ps)
+        require_projects
+
+        for i in "${name[@]}"; do
+            echo "=== $i ==="
+            compose_run "$i" ps
+        done
         ;;
 
-   remove|down)
-	checkstat
-	for i in ${name[@]}; do
-	cd $dir/$i
-	$docker_compose --file $dir/$i/"${COMPOSE_FILE:-docker-compose}.${COMPOSE_EXT:-yml}" down
-	#if docker inspect "$i" >/dev/null 2>&1; then
-	#if docker inspect "$i" | grep '"Running": true,'  >/dev/null 2>&1; then
-	  #echo "Stopping $i"
-	  #docker stop "$i" >/dev/null 2>&1
-	  #echo "Removing $i"
-	  #docker rm "$i" >/dev/null 2>&1
-	#elif docker inspect "$i" | grep '"Running": false,'  >/dev/null 2>&1; then
-	  #echo "Removing $i"
-	  #docker rm "$i" >/dev/null 2>&1
-	#else
-	  #echo "$i already removed"
-	#fi
-	#fi
-	done
+    start|up)
+        require_projects
+
+        for i in "${name[@]}"; do
+            compose_run "$i" up -d
+        done
         ;;
 
-   purge)
-	checkstat
-	for i in ${name[@]}; do
-	cd $dir/$i
-	$docker_compose --file $dir/$i/"${COMPOSE_FILE:-docker-compose}.${COMPOSE_EXT:-yml}" down -v --remove-orphans
-	#if docker inspect "$i" >/dev/null 2>&1; then
-	#if docker inspect "$i" | grep '"Running": true,'  >/dev/null 2>&1; then
-	  #echo "Stopping $i"
-	  #docker stop "$i" >/dev/null 2>&1
-	  #echo "Removing $i"
-	  #docker rm "$i" >/dev/null 2>&1
-	#elif docker inspect "$i" | grep '"Running": false,'  >/dev/null 2>&1; then
-	  #echo "Removing $i"
-	  #docker rm "$i" >/dev/null 2>&1
-	#else
-	  #echo "$i already removed"
-	#fi
-	#fi
-	done
+    restart|reload)
+        require_projects
+
+        for i in "${name[@]}"; do
+            compose_run "$i" restart
+        done
         ;;
 
-   pause|halt)
-	checkstat
-	for i in ${name[@]}; do
-	cd $dir/$i
-	$docker_compose --file $dir/$i/"${COMPOSE_FILE:-docker-compose}.${COMPOSE_EXT:-yml}" pause
-	#if docker inspect "$i" | grep '"Running": true,'  >/dev/null 2>&1; then
-	#if docker inspect "$i" | grep '"Paused": true,'  >/dev/null 2>&1; then
-	  #echo "$i already paused"
-	#else
-	  #echo "Pausing $i"
-	  #docker pause "$i" >/dev/null 2>&1
-	#fi
-	#else
-	  #echo "$i is not running"
-	#fi
-	done
+    recreate|rebuild)
+        require_projects
+
+        for i in "${name[@]}"; do
+            compose_run "$i" down
+            compose_run "$i" up -d
+        done
         ;;
 
-   unpause|unhalt)
-	checkstat
-	for i in ${name[@]}; do
-	cd $dir/$i
-	$docker_compose --file $dir/$i/"${COMPOSE_FILE:-docker-compose}.${COMPOSE_EXT:-yml}" unpause
-	#if docker inspect "$i" | grep '"Paused": false,'  >/dev/null 2>&1; then
-	  #echo "$i already unpaused"
-	#else
-	  #echo "Unpausing $i"
-	  #docker unpause "$i" >/dev/null 2>&1
-	#fi
-	done
+    stop)
+        require_projects
+
+        for i in "${name[@]}"; do
+            compose_run "$i" stop
+        done
         ;;
 
-   pull)
-	checkstat
-	for i in ${name[@]}; do
-	cd $dir/$i
-	eval $docker_compose --file $dir/$i/"${COMPOSE_FILE:-docker-compose}.${COMPOSE_EXT:-yml}" pull
-	done
-	;;
+    remove|down)
+        require_projects
 
-   -u|--usage)
-        printf "Use either $0 edit, delete/rm, start/up, stop, restart/reload, recreate/rebuild\nremove/down, pause, unpause, or -h/-?/--help for further information\n"
-   	;;
+        for i in "${name[@]}"; do
+            compose_run "$i" down
+        done
+        ;;
 
-   -h|--help|-?)
-	printf "\n\tUsage:\n\t$0 action container/s\n\n\
-	Actions:\n\
-	edit\t\t-\tedit configuration file\n\
-	delete/rn\t-\tremoves configuration file\n\
-	start/up\t-\tbuilds and starts a container\n\
-	restart/reload\t-\trestarts a running containter\n\
-	recreate/rebuild-\trecreates a running container\n\
-	stop\t\t-\tstops a running container\n\
-	remove/down\t-\tstops and deletes a (running) container\n\
-	(un)pause\t-\t(un)pauses a running/paused container\n\
-	\n"
-	;;
+    purge)
+        require_projects
 
-   *)
-        if [[ "$aLen" -lt 1 ]]; then
-          "$0" --usage
-        else
-          #for (( i=0; i<${aLen};  i++)); do
-	for i in "${name[@]}"; do
-	    docker "$1" "$i"
-          done
-        fi
+        for i in "${name[@]}"; do
+            compose_run "$i" down -v --remove-orphans
+        done
+        ;;
+
+    pause|halt)
+        require_projects
+
+        for i in "${name[@]}"; do
+            compose_run "$i" pause
+        done
+        ;;
+
+    unpause|unhalt)
+        require_projects
+
+        for i in "${name[@]}"; do
+            compose_run "$i" unpause
+        done
+        ;;
+
+    pull)
+        require_projects
+
+        for i in "${name[@]}"; do
+            compose_run "$i" pull
+        done
+        ;;
+
+    -h|--help|-?|-u|--usage|"")
+        cat <<EOF
+Usage: $0 <action> <project...>
+
+Actions:
+  edit              Edit or create Compose configuration
+  delete, rm        Delete project directory
+  cat, ls, list     Display Compose configuration
+  status, ps        Show container status
+  start, up         Start containers
+  restart, reload   Restart containers
+  recreate, rebuild Recreate containers
+  stop              Stop containers
+  remove, down      Stop and remove containers
+  purge             Remove containers and volumes
+  pause, halt       Pause containers
+  unpause, unhalt   Resume paused containers
+  pull              Pull container images
+  mod               Edit this script
+
+Supported Compose files:
+  docker-compose.yml
+  docker-compose.yaml
+  compose.yml
+  compose.yaml
+EOF
+        ;;
+
+    *)
+        require_projects
+
+        for i in "${name[@]}"; do
+            docker "$parameter" "$i"
+        done
         ;;
 esac
+
