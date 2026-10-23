@@ -1,116 +1,84 @@
-
 #!/usr/bin/env bash
 
 set -euo pipefail
 
-# Supported Compose filenames and extensions
+# Supported Compose filenames and extensions (in search priority order)
 COMPOSE_FILES=("docker-compose" "compose")
 COMPOSE_EXT=("yml" "yaml")
-
-# Default filename for new projects
 DEFAULT_COMPOSE_FILE="docker-compose.yml"
 
-# Root directory containing Docker projects
+# Root directory containing Compose projects
 dir="${d_docker_comp:?d_docker_comp is not set}"
-
-# Command line arguments
 parameter="${1:-}"
 name=("${@:2}")
-
-# Docker options
 OPTS=(--log-level error)
 
-# Find Docker Compose executable
+# Detect Docker Compose implementation
 if command -v docker-compose >/dev/null 2>&1; then
     docker_compose=(docker-compose)
 else
     docker_compose=(docker "${OPTS[@]}" compose)
-
     if [[ -z "${NOCOMPOSE+x}" ]]; then
         echo "No docker-compose installed. Using docker compose plugin."
         echo "Set NOCOMPOSE to suppress this message."
     fi
 fi
 
-# Locate Compose file in a project directory.
-# Returns the full path via stdout.
 find_compose_file() {
     local project="$1"
     local file ext path
-
     for file in "${COMPOSE_FILES[@]}"; do
         for ext in "${COMPOSE_EXT[@]}"; do
             path="$dir/$project/$file.$ext"
-
             if [[ -f "$path" ]]; then
                 printf '%s\n' "$path"
                 return 0
             fi
         done
     done
-
     return 1
 }
 
-# Validate project directory and Compose file
 checkstat() {
     local project="$1"
-
     if [[ ! -d "$dir/$project" ]]; then
         echo "Project '$project' not found!" >&2
         return 1
     fi
-
     if ! find_compose_file "$project" >/dev/null; then
         echo "No Compose file found for '$project'!" >&2
         return 1
     fi
 }
 
-# Run Docker Compose command for a project
 compose_run() {
     local project="$1"
     shift
-
     local compose_file
-
     checkstat "$project" || return 1
     compose_file="$(find_compose_file "$project")"
-
     (
         cd "$dir/$project"
         "${docker_compose[@]}" --file "$compose_file" "$@"
     )
 }
 
-# Edit existing Compose file or create a new project
 edit_compose() {
     local project="$1"
-    local compose_file
-
+    local compose_file yn
     if [[ ! -d "$dir/$project" ]]; then
         echo "Do you want to create a new project named '$project'?"
-
         select yn in "Yes" "No"; do
             case "$yn" in
-                Yes)
-                    mkdir -p "$dir/$project"
-                    break
-                    ;;
-                No)
-                    return 0
-                    ;;
+                Yes) mkdir -p -- "$dir/$project"; break ;;
+                No) return 0 ;;
             esac
         done
     fi
-
-    compose_file="$(find_compose_file "$project")" ||
-        compose_file="$dir/$project/$DEFAULT_COMPOSE_FILE"
-
+    compose_file="$(find_compose_file "$project")" || compose_file="$dir/$project/$DEFAULT_COMPOSE_FILE"
     "${EDITOR:-vi}" "$compose_file"
 }
 
-# Require project arguments
 require_projects() {
     if (( ${#name[@]} == 0 )); then
         echo "No projects specified." >&2
@@ -118,33 +86,24 @@ require_projects() {
     fi
 }
 
-# Confirm destructive operations (default: No)
 confirm() {
-    local message="$1"
-    local answer
-
+    local message="$1" answer
     read -r -p "$message [y/N]: " answer || return 1
     [[ "$answer" =~ ^([yY]|[yY][eE][sS])$ ]]
 }
 
-# Execute actions
 case "$parameter" in
-
     mod)
         "${EDITOR:-vi}" "$0"
         ;;
-
     delete|rm)
         require_projects
-
         for i in "${name[@]}"; do
             if [[ ! -d "$dir/$i" ]]; then
                 echo "Project '$i' not found!" >&2
                 continue
             fi
-
             echo "WARNING: This will permanently delete '$dir/$i'!"
-
             if confirm "Delete project '$i'?"; then
                 rm -rf -- "$dir/$i"
                 echo "Deleted: $i"
@@ -153,86 +112,61 @@ case "$parameter" in
             fi
         done
         ;;
-
     edit)
         require_projects
-
-        for i in "${name[@]}"; do
-            edit_compose "$i"
-        done
+        for i in "${name[@]}"; do edit_compose "$i"; done
         ;;
-
     cat|ls|list)
         require_projects
-
         for i in "${name[@]}"; do
             checkstat "$i"
             compose_file="$(find_compose_file "$i")"
-
             echo "=== $i ==="
             cat -- "$compose_file"
         done
         ;;
-
     status|ps)
         require_projects
-
         for i in "${name[@]}"; do
             echo "=== $i ==="
             compose_run "$i" ps
         done
         ;;
-
+    logs|log)
+        require_projects
+        for i in "${name[@]}"; do
+            compose_run "$i" logs -f
+        done
+        ;;
     start|up)
         require_projects
-
-        for i in "${name[@]}"; do
-            compose_run "$i" up -d
-        done
+        for i in "${name[@]}"; do compose_run "$i" up -d; done
         ;;
-
     restart|reload)
         require_projects
-
-        for i in "${name[@]}"; do
-            compose_run "$i" restart
-        done
+        for i in "${name[@]}"; do compose_run "$i" restart; done
         ;;
-
     recreate|rebuild)
         require_projects
-
         for i in "${name[@]}"; do
             compose_run "$i" down
             compose_run "$i" up -d
         done
         ;;
-
     stop)
         require_projects
-
-        for i in "${name[@]}"; do
-            compose_run "$i" stop
-        done
+        for i in "${name[@]}"; do compose_run "$i" stop; done
         ;;
-
     remove|down)
         require_projects
-
-        for i in "${name[@]}"; do
-            compose_run "$i" down
-        done
+        for i in "${name[@]}"; do compose_run "$i" down; done
         ;;
-
     purge)
         require_projects
-
         for i in "${name[@]}"; do
             checkstat "$i"
-
             echo "WARNING: This will remove containers and volumes for '$i'!"
             echo "Persistent data stored in Docker volumes may be permanently lost."
-
             if confirm "Purge project '$i'?"; then
                 compose_run "$i" down -v --remove-orphans
             else
@@ -240,33 +174,22 @@ case "$parameter" in
             fi
         done
         ;;
-
     pause|halt)
         require_projects
-
-        for i in "${name[@]}"; do
-            compose_run "$i" pause
-        done
+        for i in "${name[@]}"; do compose_run "$i" pause; done
         ;;
-
     unpause|unhalt)
         require_projects
-
-        for i in "${name[@]}"; do
-            compose_run "$i" unpause
-        done
+        for i in "${name[@]}"; do compose_run "$i" unpause; done
         ;;
-
     pull)
         require_projects
-
-        for i in "${name[@]}"; do
-            compose_run "$i" pull
-        done
+        for i in "${name[@]}"; do compose_run "$i" pull; done
         ;;
-
     -h|--help|-?|-u|--usage|"")
-        cat <<EOF
+        cat <<HELP
+COMP – Compose Organization and Management Program
+
 Usage: $0 <action> <project...>
 
 Actions:
@@ -274,9 +197,10 @@ Actions:
   delete, rm        Delete project directory (confirmation required)
   cat, ls, list     Display Compose configuration
   status, ps        Show container status
+  logs, log         Follow Compose logs (Ctrl+C to exit)
   start, up         Start containers
   restart, reload   Restart containers
-  recreate, rebuild Recreate containers
+  recreate, rebuild Recreate containers (down then up -d; no image build)
   stop              Stop containers
   remove, down      Stop and remove containers
   purge             Remove containers and volumes (confirmation required)
@@ -292,17 +216,11 @@ Supported Compose files:
   compose.yaml
 
 Destructive operations:
-  delete/rm and purge require explicit confirmation.
-  The default answer is No.
-EOF
+  delete/rm and purge require explicit confirmation (default: No).
+HELP
         ;;
-
     *)
         require_projects
-
-        for i in "${name[@]}"; do
-            docker "$parameter" "$i"
-        done
+        for i in "${name[@]}"; do docker "$parameter" "$i"; done
         ;;
 esac
-
