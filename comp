@@ -4,11 +4,11 @@
 set -euo pipefail
 
 # Supported Compose filenames and extensions
-COMPOSE_FILES=("compose" "docker-compose")
+COMPOSE_FILES=("docker-compose" "compose")
 COMPOSE_EXT=("yml" "yaml")
 
 # Default filename for new projects
-DEFAULT_COMPOSE_FILE="compose.yml"
+DEFAULT_COMPOSE_FILE="docker-compose.yml"
 
 # Root directory containing Docker projects
 dir="${d_docker_comp:?d_docker_comp is not set}"
@@ -118,6 +118,15 @@ require_projects() {
     fi
 }
 
+# Confirm destructive operations (default: No)
+confirm() {
+    local message="$1"
+    local answer
+
+    read -r -p "$message [y/N]: " answer || return 1
+    [[ "$answer" =~ ^([yY]|[yY][eE][sS])$ ]]
+}
+
 # Execute actions
 case "$parameter" in
 
@@ -129,21 +138,19 @@ case "$parameter" in
         require_projects
 
         for i in "${name[@]}"; do
-            checkstat "$i"
+            if [[ ! -d "$dir/$i" ]]; then
+                echo "Project '$i' not found!" >&2
+                continue
+            fi
 
-            echo "Delete all service files for '$i'?"
+            echo "WARNING: This will permanently delete '$dir/$i'!"
 
-            select yn in "Yes" "No"; do
-                case "$yn" in
-                    Yes)
-                        rm -rf -- "$dir/$i"
-                        break
-                        ;;
-                    No)
-                        break
-                        ;;
-                esac
-            done
+            if confirm "Delete project '$i'?"; then
+                rm -rf -- "$dir/$i"
+                echo "Deleted: $i"
+            else
+                echo "Skipped: $i"
+            fi
         done
         ;;
 
@@ -221,7 +228,16 @@ case "$parameter" in
         require_projects
 
         for i in "${name[@]}"; do
-            compose_run "$i" down -v --remove-orphans
+            checkstat "$i"
+
+            echo "WARNING: This will remove containers and volumes for '$i'!"
+            echo "Persistent data stored in Docker volumes may be permanently lost."
+
+            if confirm "Purge project '$i'?"; then
+                compose_run "$i" down -v --remove-orphans
+            else
+                echo "Skipped: $i"
+            fi
         done
         ;;
 
@@ -255,7 +271,7 @@ Usage: $0 <action> <project...>
 
 Actions:
   edit              Edit or create Compose configuration
-  delete, rm        Delete project directory
+  delete, rm        Delete project directory (confirmation required)
   cat, ls, list     Display Compose configuration
   status, ps        Show container status
   start, up         Start containers
@@ -263,7 +279,7 @@ Actions:
   recreate, rebuild Recreate containers
   stop              Stop containers
   remove, down      Stop and remove containers
-  purge             Remove containers and volumes
+  purge             Remove containers and volumes (confirmation required)
   pause, halt       Pause containers
   unpause, unhalt   Resume paused containers
   pull              Pull container images
@@ -274,6 +290,10 @@ Supported Compose files:
   docker-compose.yaml
   compose.yml
   compose.yaml
+
+Destructive operations:
+  delete/rm and purge require explicit confirmation.
+  The default answer is No.
 EOF
         ;;
 
